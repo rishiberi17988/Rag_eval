@@ -4,7 +4,10 @@ langchain-text-splitters
 langchain-core 
 chromadb 
 groq 
+langchain-google-genai
 sentence-transformers 
 deepeval 
 pytest
 python-dotenv
+langchain_huggingface
+ipykernel
