@@ -27,13 +27,14 @@ TOP_K = 5
 def load_transcripts():
 
     docs = []
-    for path in glob.glob(f"{DATA_DIR}/*.vtt"):
+    for path in sorted(glob.glob(f"{DATA_DIR}/*.vtt")):
         lines = []
-        for line in open(path):
-            line = line.strip()
-            if not line or line == "WEBVTT" or "-->" in line:
-                continue
-            lines.append(line)
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line == "WEBVTT" or "-->" in line:
+                    continue
+                lines.append(line)
         text = " ".join(lines)
 
         session = re.search(r"Session[ _]*(\d+)", path).group(1)
@@ -53,6 +54,14 @@ def chunk_documents(docs):
         chunk_size=CHUNK_SIZE,
         chunk_overlap=CHUNK_OVERLAP,
     ).split_documents(docs)
+
+
+def _vector_count(index) -> int:
+    stats = index.describe_index_stats()
+    count = getattr(stats, "total_vector_count", None)
+    if count is None and hasattr(stats, "get"):
+        count = stats.get("total_vector_count", 0)
+    return int(count or 0)
 
 
 # 2. BUILD ---- chunk, embed once, and keep it in Pinecone so we don't re-embed
@@ -99,16 +108,26 @@ def upsert_chunks(index, embeddings, chunks):
     # deterministic ids -> re-running never creates duplicates
     ids = [f"s{c.metadata['session']}-{i}" for i, c in enumerate(chunks)]
     store.add_documents(chunks, ids=ids)
+
+    # Pinecone serverless is eventually consistent; wait until vectors are searchable
+    for _ in range(30):
+        if _vector_count(index) >= len(chunks):
+            break
+        time.sleep(1)
+
     return {"upserted": len(chunks)}
 
 
 @traceable(run_type="chain", name="load_store", metadata={"embedding_model": EMBEDDING_MODEL})
 def load_store(rebuild=False):
+    if not os.getenv("OPENAI_API_KEY"):
+        raise RuntimeError("OPENAI_API_KEY is not set (add it to .env)")
+
     embeddings = OpenAIEmbeddings(model=EMBEDDING_MODEL)
     index = ensure_index()
 
     # Only embed + upload when the index is empty (or a rebuild is forced).
-    if rebuild or index.describe_index_stats().get("total_vector_count", 0) == 0:
+    if rebuild or _vector_count(index) == 0:
         chunks = chunk_documents(load_transcripts())
         upsert_chunks(index, embeddings, chunks)
 

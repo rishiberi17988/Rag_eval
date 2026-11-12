@@ -17,6 +17,7 @@ warning), since no retriever could find them.
 """
 
 import glob
+import inspect
 import json
 import os
 import re
@@ -59,24 +60,35 @@ class OpenAIJudge(DeepEvalBaseLLM):
 
     @staticmethod
     def _to_schema(raw: str, schema):
-        try:
-            return schema.model_validate_json(raw)
-        except Exception:
-            start, end = raw.find("{"), raw.rfind("}")
-            return schema.model_validate(json.loads(raw[start : end + 1]))
+        if hasattr(schema, "model_validate_json"):
+            try:
+                return schema.model_validate_json(raw)
+            except Exception:
+                pass
+        start, end = raw.find("{"), raw.rfind("}")
+        data = json.loads(raw[start : end + 1] if start != -1 and end != -1 else raw)
+        if hasattr(schema, "model_validate"):
+            return schema.model_validate(data)
+        return schema(**data)
 
     def generate(self, prompt: str, schema=None):
         if schema is None:
             return chat(self._messages(prompt), model=self.model_name)
-        raw = chat(self._messages(prompt), model=self.model_name,
-                   response_format={"type": "json_object"})
+        try:
+            raw = chat(self._messages(prompt), model=self.model_name,
+                       response_format={"type": "json_object"})
+        except Exception:
+            raw = chat(self._messages(prompt), model=self.model_name)
         return self._to_schema(raw, schema)
 
     async def a_generate(self, prompt: str, schema=None):
         if schema is None:
             return await achat(self._messages(prompt), model=self.model_name)
-        raw = await achat(self._messages(prompt), model=self.model_name,
-                          response_format={"type": "json_object"})
+        try:
+            raw = await achat(self._messages(prompt), model=self.model_name,
+                              response_format={"type": "json_object"})
+        except Exception:
+            raw = await achat(self._messages(prompt), model=self.model_name)
         return self._to_schema(raw, schema)
 
     def get_model_name(self) -> str:
@@ -145,10 +157,14 @@ def run(retriever, include_missing=False):
 
     # 4. EVALUATE --- every metric on every case, batched + parallel, printed report.
     #    hyperparameters travel with the run so the report is tagged with the config.
+    eval_kwargs = {}
+    if "max_concurrent" in inspect.signature(evaluate).parameters:
+        eval_kwargs["max_concurrent"] = MAX_CONCURRENT
+
     result = evaluate(
         test_cases=test_cases,
         metrics=metrics,
-        max_concurrent=MAX_CONCURRENT,
+        **eval_kwargs,
         hyperparameters={
             "model": "none",
             "prompt template": "retriever_only (no generator)",
