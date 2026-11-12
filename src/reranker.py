@@ -11,7 +11,8 @@ RERANK_SYSTEM = (
     "You are a relevance ranker for a retrieval system. Given a user query and a "
     "numbered list of transcript chunks, score how useful each chunk is for "
     "answering the query, from 0 (irrelevant) to 10 (directly answers it). "
-    "Score every chunk exactly once."
+    "Score every chunk exactly once. Return ONLY valid JSON in the format: "
+    '{"scores": [{"index": 0, "score": 8.5}]}'
 )
 
 RERANK_SCHEMA = {
@@ -42,6 +43,12 @@ RERANK_SCHEMA = {
 }
 
 
+def _parse_scores(raw: str):
+    start, end = raw.find("{"), raw.rfind("}")
+    payload = json.loads(raw[start : end + 1] if start != -1 and end != -1 else raw)
+    return {int(s["index"]): float(s["score"]) for s in payload["scores"]}
+
+
 class RerankingRetriever:
     def __init__(self, fetch_k=10, top_k=5, model=LLM_MODEL):
         self.store = load_store()
@@ -62,11 +69,19 @@ class RerankingRetriever:
             {"role": "system", "content": RERANK_SYSTEM},
             {"role": "user", "content": f"Query: {query}\n\nChunks:\n{numbered}"},
         ]
-        try:
-            raw = chat(messages, model=self.model, response_format=RERANK_SCHEMA)
-            scores = {int(s["index"]): float(s["score"]) for s in json.loads(raw)["scores"]}
-        except Exception:
-            # if the LLM output can't be parsed, fall back to the vector-search order
+        scores = None
+        for fmt in (RERANK_SCHEMA, {"type": "json_object"}, None):
+            try:
+                kwargs = {"response_format": fmt} if fmt is not None else {}
+                raw = chat(messages, model=self.model, **kwargs)
+                scores = _parse_scores(raw)
+                break
+            except Exception:
+                continue
+
+        if scores is None:
+            # if the LLM output still can't be parsed, fall back to vector-search order
+            print("[warn] reranker JSON parse failed; falling back to vector-search order")
             scores = {i: float(len(candidates) - i) for i in range(len(candidates))}
 
         # 3. SORT by score, keep the best top_k (scores returned so they show in the trace)
