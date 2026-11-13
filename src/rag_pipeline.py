@@ -1,4 +1,4 @@
-from src.reranker import RerankingRetriever
+from src.retriever import build_retriever
 from src.generator import generate
 from langsmith import traceable
 
@@ -6,8 +6,8 @@ from langsmith import traceable
 
 class RagPipeline:
     def __init__(self, fetch_k=10, top_k=5):
-        # one retriever instance — loads the store + reranker model once
-        self.retriever = RerankingRetriever(fetch_k=fetch_k, top_k=top_k)
+        # one retriever instance — loads the normal Pinecone vector store retriever
+        self.retriever = build_retriever()
 
     @traceable(run_type="chain", name="RagPipeline")
     def invoke(self, query: str) -> dict:
