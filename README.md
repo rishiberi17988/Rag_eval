@@ -6,7 +6,7 @@
 [![DeepEval](https://img.shields.io/badge/Evaluation-DeepEval-6C47FF)](https://deepeval.com/)
 [![LangSmith](https://img.shields.io/badge/Tracing-LangSmith-1F6FEB)](https://www.langchain.com/langsmith)
 
-A hands-on framework for evaluating a Retrieval-Augmented Generation (RAG) application across **retrieval, generation, end-to-end quality, safety, latency, cost, and reliability**. It also includes a baseline-versus-candidate regression workflow and online evaluation of LangSmith traces.
+A hands-on framework for evaluating a Retrieval-Augmented Generation (RAG) application across **retrieval, generation, end-to-end quality, safety, latency, cost, and reliability**. It also includes a baseline-versus-candidate regression workflow and failure-focused LangSmith observability.
 
 The project uses **LangChain, Pinecone, OpenAI models, DeepEval, and LangSmith** to measure RAG quality, diagnose failures, and make changes safer to ship.
 
@@ -20,7 +20,6 @@ The project uses **LangChain, Pinecone, OpenAI models, DeepEval, and LangSmith**
 - **Safety evaluation:** Scope adherence, sensitive-information leakage/PII, and toxicity.
 - **Operational evaluation:** End-to-end latency, time to first token, token usage, cost, and reliability.
 - **Regression testing:** Compare a candidate evaluation snapshot against a saved baseline using metric-specific directions, gates, guardrails, and tolerances.
-- **Online evaluation:** Periodically score LangSmith production traces and attach evaluation feedback to runs.
 - **Failure-focused observability:** Send failed DeepEval test cases and their failure reasons to LangSmith without tracing every normal model call.
 
 ## Evaluation map
@@ -36,7 +35,6 @@ The project uses **LangChain, Pinecone, OpenAI models, DeepEval, and LangSmith**
 | Operations | Is the application fast, affordable, and reliable? | `evals/eval_ops.py` |
 | Full evaluation snapshot | What is the quality/safety/ops state of one pipeline version? | `evals/run_suite.py` |
 | Regression decision | Did the candidate regress against the baseline? | `evals/compare.py` |
-| Online trace evaluation | How well do recent LangSmith runs perform? | `evals/eval_online.py` |
 
 ## Architecture
 
@@ -76,8 +74,7 @@ OpenAI embeddings -----> Pinecone vector index
 
 LangSmith:
   - Failed offline evaluation cases are logged with failure reasons.
-  - The online worker reads existing production traces and writes
-    Faithfulness, Answer Relevancy, and Contextual Relevancy feedback.
+  - Normal successful pipeline/model calls are not automatically traced.
 ```
 
 **Implementation note:** The current `RagPipeline` uses the retriever returned by `build_retriever()`. The reranker has a separate implementation and evaluation entry point, so the baseline and reranked retrieval approaches can be compared independently.
@@ -102,7 +99,6 @@ Rag_eval/
 │   ├── metric_registry.py        # Metric direction, gate/guardrail, tolerances
 │   ├── run_suite.py              # Runs the full suite and writes a snapshot
 │   ├── compare.py                # Baseline/candidate regression decision
-│   ├── eval_online.py             # Online scoring of LangSmith traces
 │   ├── eval_retriever.py
 │   ├── eval_retriever_with_reranker.py
 │   ├── eval_generator.py
@@ -122,7 +118,7 @@ Rag_eval/
 - Python 3.9+
 - An OpenAI API key
 - A Pinecone API key and a Pinecone serverless region
-- A LangSmith API key if you want failed-case logging or online trace evaluation
+- A LangSmith API key if you want failure-only evaluation logging
 
 ### 2. Clone and install
 
@@ -251,24 +247,6 @@ The comparison exits with code `0` for PASS, `1` for FAIL, and `2` for REVIEW, s
 
 The checked-in baseline is a reference snapshot, not a universal quality target. Re-run and version your own baseline when you intentionally change the evaluation dataset, model, or evaluation setup.
 
-## Online evaluation with LangSmith
-
-`evals/eval_online.py` is a polling worker for existing LangSmith root chain runs. It periodically:
-
-1. Reads recent runs from the configured LangSmith project (`cx doubt solver` in the current script).
-2. Selects runs with an answer and retrieval context.
-3. Scores each run with **Faithfulness**, **Answer Relevancy**, and **Contextual Relevancy** using DeepEval.
-4. Writes each score and its reason back to the LangSmith run as feedback.
-5. Checks existing feedback keys so already-scored metrics are not needlessly re-evaluated.
-
-Run it as a long-lived worker:
-
-```bash
-python -m evals.eval_online
-```
-
-The worker polls every 60 seconds. It is intended to run against a LangSmith project that already contains compatible root chain traces with `query`, `answer`, and `context` fields. Update the `PROJECT`, judge model, threshold, and sampling settings in `evals/eval_online.py` to match your tracing environment. Online LLM evaluation can add API cost; use an appropriate sampling rate for production traffic.
-
 ## Evaluation concepts explored
 
 - **Contextual Precision:** Whether relevant retrieved chunks are ranked ahead of irrelevant chunks.
@@ -281,7 +259,6 @@ The worker polls every 60 seconds. It is intended to run against a LangSmith pro
 - **Metric registry:** Explicit rules for interpreting metric changes rather than treating every score as equally important.
 - **Operational metrics:** Latency percentiles, time to first token, token-based cost estimates, and reliability rates.
 - **Safety metrics:** Scope adherence, sensitive-information leakage, and toxicity.
-- **Online feedback:** Attaching evaluation scores and explanations to individual LangSmith runs.
 
 ## Learning outcomes
 
@@ -291,7 +268,7 @@ By working through this repository, you can learn how to:
 2. Compare a baseline retriever with an LLM-based reranking strategy.
 3. Build and use golden datasets for repeatable evaluation.
 4. Apply DeepEval metrics and a custom LLM judge.
-5. Log failed evaluation cases to LangSmith and score existing traces online.
+5. Log failed evaluation cases to LangSmith with metric-level failure reasons.
 6. Build a repeatable evaluation snapshot and compare it with a baseline.
 7. Define release gates, quality guardrails, and noise tolerances for RAG metrics.
 8. Measure quality, safety, latency, cost, and reliability as separate dimensions.
@@ -300,7 +277,6 @@ By working through this repository, you can learn how to:
 
 - Evaluation scores depend on the golden dataset, judge model, metric threshold, and model version. Treat them as measurements for a defined setup, not universal quality guarantees.
 - LLM-as-a-judge evaluations call external models and can incur API costs.
-- Online evaluation runs repeatedly and can incur additional costs; tune its sampling rate and polling cadence.
 - Keep `.env` and credentials private. Do not commit API keys or sensitive trace payloads.
 
 ## License
