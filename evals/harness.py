@@ -8,15 +8,9 @@ module holds the pieces they all share:
   load_goldens(path)          -- read a golden JSON file (resolves goldens/ <-> golden/)
   summarize_by_metric(result) -- turn a DeepEval EvaluationResult into a
                                  PER-METRIC summary (pass rate + score stats)
-                                 and log per-case results + failure reasons to LangSmith
+                                 and log ONLY failed test cases to LangSmith
   print_summary(title, sum)   -- print a readable per-metric recap + flush traces
-  OpenAIJudge / JUDGE_MODEL   -- LangSmith-traced DeepEval judge (gpt-6.1-terra)
-
-Why per-metric and not pooled: a single eval file often runs several metrics at
-once (correctness + completeness + style; the RAG triad; faithfulness +
-relevancy). Pooling them into one number would let a regression in ONE metric
-hide behind the others. summarize_by_metric keeps each metric separate, which is
-exactly what the regression suite compares against the baseline.
+  OpenAIJudge / JUDGE_MODEL   -- DeepEval judge (gpt-6.1-terra)
 """
 
 import glob
@@ -29,15 +23,20 @@ from deepeval.models import DeepEvalBaseLLM
 
 from src.llm import chat, achat
 from src.retriever import DATA_DIR
-from src.tracing import traceable, flush_traces   # also runs load_dotenv()
+from src.tracing import (
+    traceable,
+    _ls_traceable,
+    tracing_context,
+    tracing_enabled,
+    flush_traces,
+)
 
 JUDGE_MODEL_NAME = os.getenv("JUDGE_MODEL", "gpt-6.1-terra")
 
 
 # ---------------------------------------------------------------- judge
 class OpenAIJudge(DeepEvalBaseLLM):
-    """DeepEval judge that calls the OpenAI chat API through src/llm.py
-    (so every call is traced in LangSmith).
+    """DeepEval judge that calls the OpenAI chat API through src/llm.py.
 
     When DeepEval passes a `schema` (a pydantic model), the judge requests
     JSON output and parses it into that schema. Without a schema it returns
@@ -93,32 +92,6 @@ class OpenAIJudge(DeepEvalBaseLLM):
 JUDGE_MODEL = OpenAIJudge(JUDGE_MODEL_NAME)
 
 
-def _install_deepeval_judge_hook():
-    """Allow DeepEval metrics to accept any model string (e.g. 'gpt-6.1-terra')
-    by routing string model names through OpenAIJudge."""
-    try:
-        from deepeval.metrics import utils as de_utils
-        orig_init = de_utils.initialize_model
-    except Exception:
-        return
-
-    if getattr(orig_init, "_rag_eval_wrapped", False):
-        return
-
-    def _patched_initialize_model(model=None, *args, **kwargs):
-        if model is None or isinstance(model, str):
-            model = OpenAIJudge(model or JUDGE_MODEL_NAME)
-        return orig_init(model, *args, **kwargs)
-
-    _patched_initialize_model._rag_eval_wrapped = True
-    for mod_name, mod in list(sys.modules.items()):
-        if mod_name.startswith("deepeval") and hasattr(mod, "initialize_model"):
-            setattr(mod, "initialize_model", _patched_initialize_model)
-
-
-_install_deepeval_judge_hook()
-
-
 # ---------------------------------------------------------------- helpers
 def _resolve_golden_path(path: str) -> str:
     if os.path.exists(path):
@@ -134,7 +107,6 @@ def _resolve_golden_path(path: str) -> str:
     return path
 
 
-@traceable(run_type="tool", name="load_goldens")
 def load_goldens(path):
     resolved = _resolve_golden_path(path)
     with open(resolved, encoding="utf-8") as f:
@@ -156,7 +128,7 @@ def golden_session(g):
     return m.group(1) if m else None
 
 
-# ---------------------------------------------------------------- LangSmith failure logging
+# ---------------------------------------------------------------- LangSmith failure-only logging
 def _extract_no_verdicts(metric_obj):
     """Pull individual 'no' verdicts + their reasons from a DeepEval metric or
     its verbose_logs (works even when include_reason=False)."""
@@ -173,7 +145,6 @@ def _extract_no_verdicts(metric_obj):
 
     verbose_logs = getattr(metric_obj, "verbose_logs", None) or ""
     if verbose_logs:
-        # Match JSON blocks in verbose_logs that have "verdict": "no"
         for match in re.finditer(
             r'\{\s*"verdict"\s*:\s*"no"\s*,\s*"(?:reason|statement)"\s*:\s*"([^"]+)"',
             verbose_logs,
@@ -183,69 +154,46 @@ def _extract_no_verdicts(metric_obj):
     return bad
 
 
-@traceable(run_type="chain", name="eval_test_case")
-def _trace_test_case(query, passed, metrics_breakdown):
+@_ls_traceable(run_type="tool", name="failed_test_case", tags=["failed", "eval"])
+def _trace_failed_case(query, expected_output, actual_output, retrieval_context, failed_metrics):
+    """Logs a single failed test case + its failure reasons to LangSmith."""
     return {
         "query": query,
-        "passed": passed,
-        "metrics": metrics_breakdown,
+        "expected_output": expected_output,
+        "actual_output": actual_output,
+        "retrieval_context": retrieval_context,
+        "failed_metrics": failed_metrics,
     }
 
 
-@traceable(run_type="tool", name="wrong_cases_reasons", tags=["failures", "eval"])
-def _trace_failures(failures):
-    """Dedicated LangSmith span listing only the failed test cases and the
-    exact reason(s) each metric marked them wrong."""
-    return {
-        "failed_count": len(failures),
-        "failed_cases": failures,
-    }
+_LOGGED_RESULT_IDS = set()
 
 
-def summarize_by_metric(result):
-    """DeepEval EvaluationResult -> {metric_name: {n, pass_rate, avg/min/max score}}.
-    Also logs per-question scores and failure reasons to LangSmith."""
+def log_failures_to_langsmith(result):
+    """Inspect a DeepEval EvaluationResult and send ONLY failed test cases to
+    LangSmith. Idempotent per result object so hooks + summarize_by_metric
+    never double-log."""
+    if not tracing_enabled() or result is None:
+        return
+    if id(result) in _LOGGED_RESULT_IDS:
+        return
+    _LOGGED_RESULT_IDS.add(id(result))
+
     test_results = getattr(result, "test_results", None)
     if test_results is None:
         test_results = result if isinstance(result, list) else []
 
-    buckets = {}   # metric_name -> {"scores": [...], "passed": int, "total": int}
-    failures = []
-
+    logged_any = False
     for tr in test_results:
-        query = getattr(tr, "input", None) or getattr(tr, "name", "unknown")
         metrics = getattr(tr, "metrics_data", None) or getattr(tr, "metrics", None) or []
-
-        case_metrics = []
         failed_metrics = []
-
         for m in metrics:
-            name = getattr(m, "name", "unknown")
-            score = getattr(m, "score", None)
-            threshold = getattr(m, "threshold", None)
-            success = bool(getattr(m, "success", False))
-            reason = getattr(m, "reason", None) or getattr(m, "error", None)
-            no_verdicts = _extract_no_verdicts(m)
-
-            b = buckets.setdefault(name, {"scores": [], "passed": 0, "total": 0})
-            b["total"] += 1
-            if score is not None:
-                b["scores"].append(score)
-            if success:
-                b["passed"] += 1
-
-            entry = {
-                "metric": name,
-                "score": score,
-                "threshold": threshold,
-                "passed": success,
-                "reason": reason,
-            }
-            if no_verdicts:
-                entry["wrong_verdicts"] = no_verdicts
-            case_metrics.append(entry)
-
-            if not success:
+            if not bool(getattr(m, "success", False)):
+                name = getattr(m, "name", "unknown")
+                score = getattr(m, "score", None)
+                threshold = getattr(m, "threshold", None)
+                reason = getattr(m, "reason", None) or getattr(m, "error", None)
+                no_verdicts = _extract_no_verdicts(m)
                 failed_metrics.append({
                     "metric": name,
                     "score": score,
@@ -254,19 +202,82 @@ def summarize_by_metric(result):
                     "wrong_verdicts": no_verdicts,
                 })
 
-        case_passed = len(failed_metrics) == 0
-        _trace_test_case(query=query, passed=case_passed, metrics_breakdown=case_metrics)
-
         if failed_metrics:
-            failures.append({
-                "query": query,
-                "expected_output": getattr(tr, "expected_output", None),
-                "actual_output": getattr(tr, "actual_output", None),
-                "failed_metrics": failed_metrics,
-            })
+            logged_any = True
+            with tracing_context(enabled=True):
+                _trace_failed_case(
+                    query=getattr(tr, "input", None) or getattr(tr, "name", "unknown"),
+                    expected_output=getattr(tr, "expected_output", None),
+                    actual_output=getattr(tr, "actual_output", None),
+                    retrieval_context=getattr(tr, "retrieval_context", None),
+                    failed_metrics=failed_metrics,
+                )
 
-    if failures:
-        _trace_failures(failures)
+    if logged_any:
+        flush_traces()
+
+
+def _install_deepeval_hooks():
+    """1. Route string model names through OpenAIJudge.
+       2. Hook deepeval.evaluate so even standalone eval files (eval_toxicity,
+          eval_leakage, eval_scope_safety) automatically log failed test cases
+          to LangSmith."""
+    try:
+        from deepeval.metrics import utils as de_utils
+        orig_init = de_utils.initialize_model
+        if not getattr(orig_init, "_rag_eval_wrapped", False):
+            def _patched_initialize_model(model=None, *args, **kwargs):
+                if model is None or isinstance(model, str):
+                    model = OpenAIJudge(model or JUDGE_MODEL_NAME)
+                return orig_init(model, *args, **kwargs)
+
+            _patched_initialize_model._rag_eval_wrapped = True
+            for mod_name, mod in list(sys.modules.items()):
+                if mod_name.startswith("deepeval") and hasattr(mod, "initialize_model"):
+                    setattr(mod, "initialize_model", _patched_initialize_model)
+    except Exception:
+        pass
+
+    try:
+        import deepeval
+        orig_eval = deepeval.evaluate
+        if not getattr(orig_eval, "_rag_eval_wrapped", False):
+            def _patched_evaluate(*args, **kwargs):
+                res = orig_eval(*args, **kwargs)
+                log_failures_to_langsmith(res)
+                return res
+
+            _patched_evaluate._rag_eval_wrapped = True
+            for mod_name, mod in list(sys.modules.items()):
+                if hasattr(mod, "evaluate") and getattr(mod, "evaluate", None) is orig_eval:
+                    setattr(mod, "evaluate", _patched_evaluate)
+    except Exception:
+        pass
+
+
+_install_deepeval_hooks()
+
+
+def summarize_by_metric(result):
+    """DeepEval EvaluationResult -> {metric_name: {n, pass_rate, avg/min/max score}}."""
+    log_failures_to_langsmith(result)
+
+    test_results = getattr(result, "test_results", None)
+    if test_results is None:
+        test_results = result if isinstance(result, list) else []
+
+    buckets = {}   # metric_name -> {"scores": [...], "passed": int, "total": int}
+    for tr in test_results:
+        metrics = getattr(tr, "metrics_data", None) or getattr(tr, "metrics", None) or []
+        for m in metrics:
+            name = getattr(m, "name", "unknown")
+            b = buckets.setdefault(name, {"scores": [], "passed": 0, "total": 0})
+            b["total"] += 1
+            score = getattr(m, "score", None)
+            if score is not None:
+                b["scores"].append(score)
+            if getattr(m, "success", False):
+                b["passed"] += 1
 
     summary = {}
     for name, b in buckets.items():
@@ -278,7 +289,6 @@ def summarize_by_metric(result):
             "min_score": min(scores) if scores else float("nan"),
             "max_score": max(scores) if scores else float("nan"),
         }
-    flush_traces()
     return summary
 
 

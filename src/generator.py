@@ -1,61 +1,37 @@
-# src/generator.py
-"""
-The main LLM: answers a question from retrieved transcript chunks.
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from src.tracing import traceable
 
-    python -m src.generator "what is regression testing?"
-"""
+SYSTEM_PROMPT = """You are a teaching assistant for the CampusX LLM Evaluation course.
+Answer the student's question using ONLY the course transcript excerpts provided below.
+If the excerpts do not contain enough information to answer the question, reply with:
+"I don't have enough information in the course material to answer that."
+Do not make up facts or use outside knowledge."""
 
-import sys
+prompt = ChatPromptTemplate.from_messages([
+    ("system", SYSTEM_PROMPT),
+    ("human", "Course excerpts:\n{context}\n\nStudent question: {question}"),
+])
 
-from src.llm import chat, LLM_MODEL
-from src.tracing import traceable, flush_traces
+llm = ChatOpenAI(model="gpt-6-luna")
 
-ANSWER_SYSTEM = (
-    "You answer questions about a series of LLM-evaluation course sessions. "
-    "Use ONLY the provided transcript excerpts. If they don't contain the answer, "
-    "say you don't know. If an excerpt is labelled with a session, cite it like "
-    "(Session 3); never invent session numbers."
-)
+chain = prompt | llm | StrOutputParser()
 
 
-def format_context(context):
-    """Accepts a list of LangChain Documents (retriever/reranker), a list of
-    plain chunk strings (eval_generator / rag_pipeline), or a single string."""
+def _format_context(context) -> str:
     if isinstance(context, str):
         return context
-    parts = []
-    for item in context:
-        if isinstance(item, str):
-            parts.append(item)
-        else:
-            session = getattr(item, "metadata", {}).get("session")
-            prefix = f"(Session {session}) " if session is not None else ""
-            parts.append(f"{prefix}{item.page_content}")
-    return "\n\n".join(parts)
+    return "\n\n".join(
+        c if isinstance(c, str) else c.page_content for c in context
+    )
 
 
-@traceable(run_type="chain", name="generate_answer", metadata={"llm": LLM_MODEL})
-def generate(query, context, model=LLM_MODEL):
-    messages = [
-        {"role": "system", "content": ANSWER_SYSTEM},
-        {"role": "user", "content": f"Transcript excerpts:\n{format_context(context)}\n\nQuestion: {query}"},
-    ]
-    return chat(messages, model=model)
+@traceable(run_type="chain", name="generate")
+def generate(question: str, context) -> str:
+    return chain.invoke({"question": question, "context": _format_context(context)})
 
 
-@traceable(run_type="chain", name="rag_pipeline")
-def answer(query, retriever):
-    docs = retriever.invoke(query)
-    return {
-        "answer": generate(query, docs),
-        "contexts": [d.page_content for d in docs],
-    }
-
-
-if __name__ == "__main__":
-    from src.reranker import RerankingRetriever
-
-    q = " ".join(sys.argv[1:]) or "what is regression testing?"
-    out = answer(q, RerankingRetriever())
-    print(out["answer"])
-    flush_traces()
+@traceable(run_type="chain", name="generate_stream")
+def generate_stream(question: str, context):
+    return chain.stream({"question": question, "context": _format_context(context)})

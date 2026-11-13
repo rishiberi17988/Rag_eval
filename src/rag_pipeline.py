@@ -1,6 +1,6 @@
 from src.retriever import build_retriever
 from src.generator import generate
-from langsmith import traceable
+from src.tracing import traceable
 
 
 
