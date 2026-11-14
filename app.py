@@ -7,7 +7,6 @@ import time
 import nest_asyncio
 import streamlit as st
 from dotenv import load_dotenv
-from nemoguardrails import LLMRails, RailsConfig
 
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
@@ -18,13 +17,15 @@ nest_asyncio.apply()
 load_dotenv(ROOT / ".env", override=True)
 
 from src.generator import generate_stream  # noqa: E402
-from src.rag_pipeline import RagPipeline  # noqa: E402
+from src.rag_pipeline import (  # noqa: E402
+    RagPipeline,
+    validate_input,
+    validate_output,
+)
 from src.tracing import _ls_traceable, tracing_context, tracing_enabled  # noqa: E402
 
 os.environ["LANGSMITH_PROJECT"] = "rag-eval"
 os.environ["LANGCHAIN_PROJECT"] = "rag-eval"
-
-CONFIG_DIR = str(ROOT / "guardrails" / "config")
 
 st.set_page_config(page_title="RAG Chatbot with Guardrails", layout="wide")
 st.title("LLM Evals RAG Chatbot with 8 Guardrails")
@@ -40,79 +41,10 @@ GUARDRAILS = {
     "Bias detection": ([], ["bias check output"], True),
 }
 
-INPUT_ONLY = {
-    "rails": {"input": True, "dialog": False, "retrieval": False, "output": False},
-    "log": {"activated_rails": True},
-}
-OUTPUT_ONLY = {
-    "rails": {"input": False, "dialog": False, "retrieval": False, "output": True},
-    "log": {"activated_rails": True},
-}
-
 
 @st.cache_resource(show_spinner="Loading RAG pipeline (Pinecone retriever + generator)…")
 def get_pipeline() -> RagPipeline:
     return RagPipeline()
-
-
-@st.cache_resource
-def get_single_rail(stage: str, flow: str) -> LLMRails:
-    cfg = RailsConfig.from_path(CONFIG_DIR)
-    if stage == "input":
-        cfg.rails.input.flows = [flow]
-        cfg.rails.output.flows = []
-    else:
-        cfg.rails.input.flows = []
-        cfg.rails.output.flows = [flow]
-    return LLMRails(cfg)
-
-
-def _blocking_rail(res) -> str | None:
-    if res.log and res.log.activated_rails:
-        for rail in res.log.activated_rails:
-            if rail.stop:
-                return rail.name
-    return None
-
-
-@_ls_traceable(name="check_input_rail", run_type="chain")
-async def check_input_rail(flow: str, text: str) -> dict:
-    rails = get_single_rail("input", flow)
-    res = await rails.generate_async(
-        messages=[{"role": "user", "content": text}],
-        options=INPUT_ONLY,
-    )
-    msg = res.response[-1]["content"]
-    rail = _blocking_rail(res)
-    blocked = bool(rail) or msg != text
-    return {"passed": not blocked, "blocked": blocked, "rail": rail or flow, "message": msg}
-
-
-@_ls_traceable(name="check_output_rail", run_type="chain")
-async def check_output_rail(flow: str, user_text: str, bot_text: str) -> dict:
-    rails = get_single_rail("output", flow)
-    msgs = [
-        {"role": "user", "content": user_text},
-        {"role": "assistant", "content": bot_text},
-    ]
-    res = await rails.generate_async(messages=msgs, options=OUTPUT_ONLY)
-    msg = res.response[-1]["content"]
-    rail = _blocking_rail(res)
-    blocked = bool(rail) or msg != bot_text
-    return {"passed": not blocked, "blocked": blocked, "rail": rail or flow, "message": msg}
-
-
-@_ls_traceable(name="input_guardrail", run_type="chain")
-async def validate_input(text: str, input_flows: tuple[str, ...]) -> dict:
-    if not input_flows:
-        return {"blocked": False, "rail": None, "message": text}
-    results = await asyncio.gather(
-        *(check_input_rail(flow, text) for flow in input_flows)
-    )
-    for res in results:
-        if not res["passed"]:
-            return res
-    return {"blocked": False, "rail": None, "message": text}
 
 
 @_ls_traceable(name="rag_pipeline_stream", run_type="chain")
@@ -121,23 +53,6 @@ def stream_rag(text: str, answer_placeholder) -> dict:
     context = [doc.page_content for doc in docs]
     bot = answer_placeholder.write_stream(generate_stream(text, context))
     return {"query": text, "context": context, "answer": bot}
-
-
-@_ls_traceable(name="output_guardrail", run_type="chain")
-async def validate_output(
-    user_text: str,
-    bot_text: str,
-    output_flows: tuple[str, ...],
-) -> dict:
-    if not output_flows:
-        return {"blocked": False, "rail": None, "message": bot_text}
-    results = await asyncio.gather(
-        *(check_output_rail(flow, user_text, bot_text) for flow in output_flows)
-    )
-    for res in results:
-        if not res["passed"]:
-            return res
-    return {"blocked": False, "rail": None, "message": bot_text}
 
 
 @_ls_traceable(name="chat_turn", run_type="chain")
