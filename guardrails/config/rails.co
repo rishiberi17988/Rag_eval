@@ -1,0 +1,117 @@
+# Distinct refusal messages per guardrail
+define bot refuse rate limit
+  "Blocked [Rate Limiting]: Too many requests. Maximum 5 requests per 60 seconds allowed."
+
+define bot refuse jailbreak
+  "Blocked [Jailbreak Detection]: Jailbreak or rule-bypass attempt detected."
+
+define bot refuse prompt injection
+  "Blocked [Prompt Injection Detection]: Instruction override / prompt injection detected."
+
+define bot refuse pii input
+  "Blocked [PII Protection - Input]: We can't accept or share personal info (SSN, phone, email, card)."
+
+define bot refuse data leakage input
+  "Blocked [Data Leakage Prevention - Input]: Requests for system prompts, secrets, or keys are not allowed."
+
+define bot refuse toxicity input
+  "Blocked [Toxicity Detection - Input]: Toxic, abusive, or harmful language is not allowed."
+
+define bot refuse topic
+  "Blocked [Topic Restriction]: We can only help you with topics from the LLM Evaluation & RAG Evaluation course."
+
+define bot refuse pii output
+  "Blocked [PII Protection - Output]: Response contained personal identifiable information."
+
+define bot refuse data leakage output
+  "Blocked [Data Leakage Prevention - Output]: Response leaked confidential data or secrets."
+
+define bot refuse toxicity output
+  "Blocked [Toxicity Detection - Output]: Response contained toxic or harmful language."
+
+define bot refuse bias output
+  "Blocked [Bias Detection - Output]: Response contained unfair stereotyping or bias."
+
+# Input rail flows
+define flow rate limit input
+  $response = execute check_rate_limit
+  if $response.is_blocked
+    bot refuse rate limit
+    stop
+
+define flow jailbreak check input
+  $response = execute self_check_input(variant="jailbreak")
+  if $response.is_blocked
+    bot refuse jailbreak
+    stop
+
+define flow prompt injection check input
+  $response = execute self_check_input(variant="prompt_injection")
+  if $response.is_blocked
+    bot refuse prompt injection
+    stop
+
+define flow pii check input
+  $regex = execute check_pii_regex(source="input")
+  if $regex.is_blocked
+    bot refuse pii input
+    stop
+  $response = execute self_check_input(variant="pii")
+  if $response.is_blocked
+    bot refuse pii input
+    stop
+
+define flow data leakage check input
+  $regex = execute check_data_leakage(source="input")
+  if $regex.is_blocked
+    bot refuse data leakage input
+    stop
+  $response = execute self_check_input(variant="data_leakage")
+  if $response.is_blocked
+    bot refuse data leakage input
+    stop
+
+define flow toxicity check input
+  $response = execute self_check_input(variant="toxicity")
+  if $response.is_blocked
+    bot refuse toxicity input
+    stop
+
+define flow topic check input
+  $response = execute self_check_input(variant="topic")
+  if $response.is_blocked
+    bot refuse topic
+    stop
+
+# Output rail flows
+define flow pii check output
+  $regex = execute check_pii_regex(source="output")
+  if $regex.is_blocked
+    bot refuse pii output
+    stop
+  $response = execute self_check_output(variant="pii")
+  if $response.is_blocked
+    bot refuse pii output
+    stop
+
+define flow data leakage check output
+  $regex = execute check_data_leakage(source="output")
+  if $regex.is_blocked
+    bot refuse data leakage output
+    stop
+  $response = execute self_check_output(variant="data_leakage")
+  if $response.is_blocked
+    bot refuse data leakage output
+    stop
+
+define flow toxicity check output
+  $response = execute self_check_output(variant="toxicity")
+  if $response.is_blocked
+    bot refuse toxicity output
+    stop
+
+define flow bias check output
+  $response = execute self_check_output(variant="bias")
+  if $response.is_blocked
+    bot refuse bias output
+    stop

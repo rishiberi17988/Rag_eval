@@ -1,18 +1,16 @@
-# Compatible with Python 3.9
-langchain==0.3.14
-langchain-core==0.3.30
-langchain-pinecone==0.2.2
-langchain-groq==0.2.3
-langchain-google-genai==2.0.8
-langchain-openai==0.3.0
+langchain>=0.2.14,<2.0.0
+langchain-core>=0.3.30
+langchain-pinecone>=0.2.2
+langchain-openai>=0.3.0
+langchain-text-splitters>=0.3.5
 openai>=1.58.1
-langchain-text-splitters==0.3.5
 pinecone>=5.4.0,<6.0.0
-groq==0.15.0
-deepeval==1.6.2
-pytest==8.3.4
-python-dotenv==1.0.1
-ipykernel==6.29.5
-
-# Observability (LangSmith tracing)
-langsmith>=0.1.125,<0.3
+deepeval>=1.6.2
+pytest>=8.3.4
+python-dotenv>=1.0.1
+ipykernel>=6.29.5
+langsmith>=0.1.125
+nemoguardrails==0.24.1
+streamlit
+nest_asyncio
+protobuf>=4.25.0,<6.0.0

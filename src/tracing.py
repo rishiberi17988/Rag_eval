@@ -13,9 +13,10 @@ import os
 from dotenv import load_dotenv
 from langsmith import traceable as _ls_traceable, tracing_context
 
-load_dotenv()
+load_dotenv(override=True)
 
-os.environ.setdefault("LANGSMITH_PROJECT", "rag-eval")
+os.environ["LANGSMITH_PROJECT"] = "rag-eval"
+os.environ["LANGCHAIN_PROJECT"] = "rag-eval"
 
 # Remember if LangSmith was enabled in .env, then turn off global auto-tracing
 # so LangChain (ChatOpenAI, PineconeVectorStore) and normal pipeline steps do

@@ -1,0 +1,23 @@
+models:
+  - type: main
+    engine: openai
+    model: gpt-6-luna
+
+lowest_temperature: 1.0
+
+rails:
+  input:
+    flows:
+      - rate limit input
+      - jailbreak check input
+      - prompt injection check input
+      - pii check input
+      - data leakage check input
+      - toxicity check input
+      - topic check input
+  output:
+    flows:
+      - pii check output
+      - data leakage check output
+      - toxicity check output
+      - bias check output

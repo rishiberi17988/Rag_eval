@@ -204,7 +204,7 @@ def log_failures_to_langsmith(result):
 
         if failed_metrics:
             logged_any = True
-            with tracing_context(enabled=True):
+            with tracing_context(enabled=True, project_name="rag-eval"):
                 _trace_failed_case(
                     query=getattr(tr, "input", None) or getattr(tr, "name", "unknown"),
                     expected_output=getattr(tr, "expected_output", None),
