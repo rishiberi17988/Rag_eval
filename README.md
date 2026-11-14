@@ -4,39 +4,45 @@
 [![LangChain](https://img.shields.io/badge/LangChain-0.3-1C3C3C?logo=chainlink&logoColor=white)](https://www.langchain.com/)
 [![Pinecone](https://img.shields.io/badge/Vector%20DB-Pinecone-000000)](https://www.pinecone.io/)
 [![DeepEval](https://img.shields.io/badge/Evaluation-DeepEval-6C47FF)](https://deepeval.com/)
+[![NeMo Guardrails](https://img.shields.io/badge/Guardrails-NeMo-76B900)](https://github.com/NVIDIA/NeMo-Guardrails)
 [![LangSmith](https://img.shields.io/badge/Tracing-LangSmith-1F6FEB)](https://www.langchain.com/langsmith)
 
-A hands-on framework for evaluating a Retrieval-Augmented Generation (RAG) application across **retrieval, generation, end-to-end quality, safety, latency, cost, and reliability**. It also includes a baseline-versus-candidate regression workflow and failure-focused LangSmith observability.
+A hands-on framework for evaluating and hardening a Retrieval-Augmented Generation (RAG) application. The project covers retrieval, generation, application quality, safety, operational performance, configurable runtime guardrails, and baseline-versus-candidate regression testing.
 
-The project uses **LangChain, Pinecone, OpenAI models, DeepEval, and LangSmith** to measure RAG quality, diagnose failures, and make changes safer to ship.
+It uses **LangChain, Pinecone, OpenAI models, DeepEval, NVIDIA NeMo Guardrails, and LangSmith** to measure RAG quality, enforce runtime policies, investigate failures, and make changes safer to ship.
 
 ## What this project covers
 
-- **Retrieval evaluation:** Contextual Precision and Contextual Recall.
-- **Reranking evaluation:** Compare baseline vector retrieval with an LLM-based reranking strategy.
-- **Generation evaluation:** Faithfulness and Answer Relevancy, using known-good context to isolate the generator.
-- **End-to-end evaluation:** The RAG triad—Faithfulness, Answer Relevancy, and Contextual Relevancy.
+- **Retrieval evaluation:** Contextual Precision and Contextual Recall for the standard Pinecone retriever.
+- **Reranking evaluation:** A separate experiment that over-retrieves candidates from Pinecone and reranks them with an LLM.
+- **Generator evaluation:** Faithfulness and Answer Relevancy using known-good context, isolating generation from retrieval.
+- **End-to-end evaluation:** The active pipeline evaluation currently measures Contextual Relevancy on the context returned by the live RAG pipeline.
 - **Application quality:** LLM-as-a-judge checks for correctness, completeness, and style.
-- **Safety evaluation:** Scope adherence, sensitive-information leakage/PII, and toxicity.
-- **Operational evaluation:** End-to-end latency, time to first token, token usage, cost, and reliability.
-- **Regression testing:** Compare a candidate evaluation snapshot against a saved baseline using metric-specific directions, gates, guardrails, and tolerances.
-- **Failure-focused observability:** Send failed DeepEval test cases and their failure reasons to LangSmith without tracing every normal model call.
+- **Safety evaluation:** Scope adherence, protected-information/PII leakage, and toxicity.
+- **Runtime guardrails:** Parallel input and output checks for jailbreaks, prompt injection, PII, data leakage, toxicity, topic restriction, and bias.
+- **Operational evaluation:** End-to-end latency, time to first token, token usage, estimated cost, and reliability.
+- **Regression testing:** Compare a candidate snapshot against a saved baseline using metric-specific directions, gates, guardrails, and tolerances.
+- **Failure-focused observability:** Send failed DeepEval test cases and their failure reasons to LangSmith rather than tracing every normal model call.
 
 ## Evaluation map
 
-| Evaluation area | What it answers | Main implementation |
+| Evaluation area | What it answers | Entry point |
 |---|---|---|
-| Retrieval | Did we retrieve the evidence needed to answer? | `evals/eval_retriever.py` |
-| Retrieval + reranking | Does LLM reranking improve retrieved context? | `evals/eval_retriever_with_reranker.py` |
-| Generator in isolation | Can the model answer faithfully with good context? | `evals/eval_generator.py` |
-| Full RAG pipeline | Are retrieval and generation working together? | `evals/eval_rag_pipeline.py` |
-| Application correctness | Is the final response correct and useful? | `evals/eval_application.py` |
+| Standard retrieval | Did the Pinecone retriever find useful evidence? | `evals/eval_retriever.py` |
+| Retrieval with reranking | Does LLM reranking improve the retrieved ranking? | `evals/eval_retriever_with_reranker.py` |
+| Generator in isolation | Can the model answer faithfully with known-good context? | `evals/eval_generator.py` |
+| End-to-end context relevance | Is the context returned by the live pipeline relevant to the query? | `evals/eval_rag_pipeline.py` |
+| Application correctness | Is the final response correct, complete, and well written? | `evals/eval_application.py` |
 | Safety | Does the application stay in scope and avoid unsafe output or leakage? | `evals/eval_safety.py` |
 | Operations | Is the application fast, affordable, and reliable? | `evals/eval_ops.py` |
 | Full evaluation snapshot | What is the quality/safety/ops state of one pipeline version? | `evals/run_suite.py` |
 | Regression decision | Did the candidate regress against the baseline? | `evals/compare.py` |
 
+> **Scope note:** The reranker evaluation is a separate run; it is not currently included in `evals/run_suite.py`. The end-to-end evaluation currently enables Contextual Relevancy only. Faithfulness and Answer Relevancy are present in the module as commented-out metrics and are not part of the current snapshot.
+
 ## Architecture
+
+### RAG application
 
 ```text
 VTT course transcripts
@@ -50,34 +56,85 @@ Recursive chunking
         v
 OpenAI embeddings -----> Pinecone vector index
                                 |
-                         Retrieve documents
+                         Retrieve top-k chunks
                                 |
                          Retrieved context
                                 |
                          Answer generation
                                 |
                             RAG output
-                                |
-          +---------------------+----------------------+
-          |                     |                      |
-      Quality evals         Safety evals          Ops evals
-      DeepEval judges       DeepEval judges       Latency / cost /
-      Golden datasets       Golden datasets       reliability
-          |                     |                      |
-          +---------------------+----------------------+
-                                |
-                     Snapshot + metric registry
-                                |
-                     Baseline / candidate compare
-                                |
-                       PASS / REVIEW / FAIL
-
-LangSmith:
-  - Failed offline evaluation cases are logged with failure reasons.
-  - Normal successful pipeline/model calls are not automatically traced.
 ```
 
-**Implementation note:** The current `RagPipeline` uses the retriever returned by `build_retriever()`. The reranker has a separate implementation and evaluation entry point, so the baseline and reranked retrieval approaches can be compared independently.
+The standard `RagPipeline` uses the Pinecone vector retriever returned by `build_retriever()`. The LLM reranker is implemented separately in `src/reranker.py` and evaluated through its own entry point; it is not silently substituted into the standard pipeline.
+
+### Evaluation and regression
+
+```text
+Individual evaluation modules
+  |-- Retrieval
+  |-- Generator
+  |-- End-to-end context relevance
+  |-- Application quality
+  |-- Safety
+  |-- Operations
+        |
+        v
+evals/run_suite.py
+  - Builds one RagPipeline instance
+  - Reuses its retriever for retrieval evaluation
+  - Runs the configured evaluation modules
+  - Flattens metrics into a versioned JSON snapshot
+        |
+        v
+baselines/candidate.json
+        |
+        v
+evals/compare.py <---- baselines/baseline.json
+        |
+        v
+PASS / REVIEW / FAIL
+```
+
+The metric registry in `evals/metric_registry.py` is the single source of truth for metric direction, decision type, and tolerated change.
+
+### Runtime guardrails
+
+The application uses NVIDIA NeMo Guardrails around the RAG pipeline:
+
+```text
+User query
+    |
+    v
+Input guardrails (parallel)
+  - Jailbreak
+  - Prompt injection
+  - PII
+  - Data leakage
+  - Toxicity
+  - Topic restriction
+    |
+    v
+Pinecone retrieval
+    |
+    v
+Answer generation
+    |
+    v
+Output guardrails (parallel)
+  - PII
+  - Data leakage
+  - Toxicity
+  - Bias
+    |
+    v
+Response / refusal
+```
+
+Independent flows within each stage are invoked concurrently with `asyncio.gather()`. PII and data-leakage flows also run deterministic regex checks before their model-based check. A blocking input result stops the request before retrieval; a blocking output result replaces the generated answer with the guardrail response.
+
+Guardrails are enabled by default. Set `USE_GUARDRAILS=0` to disable them for controlled experiments. The active flow lists are defined in `src/rag_pipeline.py`; the NeMo configuration and flow definitions live under `guardrails/config/`. The rate-limit flow is defined in the NeMo configuration but is not included in the pipeline's current default input-flow tuple.
+
+See [Guardrails documentation](docs/guardrails.md) for configuration, execution behavior, and latency considerations.
 
 ## Repository structure
 
@@ -87,17 +144,23 @@ Rag_eval/
 │   └── baseline.json             # Saved reference evaluation snapshot
 ├── data/                         # VTT transcripts used as the knowledge base
 ├── goldens/                      # Curated evaluation datasets
+├── guardrails/
+│   └── config/
+│       ├── config.yml            # NeMo model and active rail configuration
+│       └── rails.co              # Input/output flow definitions and refusals
+├── docs/
+│   └── guardrails.md             # Runtime guardrails guide
 ├── src/
 │   ├── retriever.py              # Transcript ingestion, chunking, Pinecone index
-│   ├── reranker.py               # LLM-based reranking retriever
+│   ├── reranker.py               # Separate LLM-based reranking retriever
 │   ├── generator.py              # Grounded answer generation
-│   ├── rag_pipeline.py           # Retrieve → generate pipeline
+│   ├── rag_pipeline.py           # Guardrails → retrieve → generate → guardrails
 │   ├── llm.py                    # Shared OpenAI clients and model settings
 │   └── tracing.py                # LangSmith tracing configuration
 ├── evals/
 │   ├── harness.py                # Shared DeepEval judge, summaries, failure logging
-│   ├── metric_registry.py        # Metric direction, gate/guardrail, tolerances
-│   ├── run_suite.py              # Runs the full suite and writes a snapshot
+│   ├── metric_registry.py         # Metric direction, gate/guardrail, tolerances
+│   ├── run_suite.py              # Runs the snapshot suite
 │   ├── compare.py                # Baseline/candidate regression decision
 │   ├── eval_retriever.py
 │   ├── eval_retriever_with_reranker.py
@@ -106,7 +169,7 @@ Rag_eval/
 │   ├── eval_application.py
 │   ├── eval_safety.py
 │   ├── eval_ops.py
-│   └── ...                       # Focused quality, safety, and ops evaluations
+│   └── ...
 ├── requirements.txt
 └── README.md
 ```
@@ -155,7 +218,10 @@ EMBEDDING_MODEL=text-embedding-3-small
 LLM_MODEL=your_supported_chat_model
 JUDGE_MODEL=your_supported_judge_model
 
-# LangSmith: enables failure-only evaluation logging
+# Runtime guardrails (enabled by default)
+USE_GUARDRAILS=1
+
+# Optional LangSmith failure-only evaluation logging
 LANGSMITH_TRACING=true
 LANGSMITH_API_KEY=your_langsmith_api_key
 LANGSMITH_PROJECT=rag-eval
@@ -163,7 +229,7 @@ LANGSMITH_PROJECT=rag-eval
 
 The Pinecone index is created by the retriever when it does not already exist. The configured embedding model must match the index dimension. The default embedding model is `text-embedding-3-small` (1536 dimensions).
 
-**Tracing behavior:** The project deliberately disables automatic LangSmith tracing for normal pipeline/model calls. When LangSmith is configured, failed DeepEval test cases are logged with their inputs, outputs, failed metrics, and reasons. This avoids sending every successful evaluation/model call to LangSmith.
+**Tracing behavior:** The project disables automatic LangSmith tracing for normal pipeline/model calls. When LangSmith is configured, failed DeepEval test cases are logged with their inputs, outputs, failed metrics, and reasons. This avoids sending every successful evaluation/model call to LangSmith. Runtime guardrail checks are not the same as this offline evaluation-failure tracing.
 
 ## Run the project
 
@@ -181,25 +247,25 @@ python -m src.retriever
 python -m src.rag_pipeline
 ```
 
-### Run individual evaluation suites
+### Run individual evaluation modules
 
 ```bash
-# Retrieval: Contextual Precision and Contextual Recall
+# Standard retrieval: Contextual Precision and Contextual Recall
 python -m evals.eval_retriever
 
-# Retrieval with LLM reranking
+# Separate retrieval experiment with LLM reranking
 python -m evals.eval_retriever_with_reranker
 
-# Generator in isolation
+# Generator in isolation, using known-good context
 python -m evals.eval_generator
 
-# End-to-end RAG triad
+# End-to-end pipeline context relevance
 python -m evals.eval_rag_pipeline
 
 # Application correctness, completeness, and style
 python -m evals.eval_application
 
-# Safety
+# Scope, leakage/PII, and toxicity
 python -m evals.eval_safety
 
 # Latency, cost, and reliability
@@ -208,7 +274,7 @@ python -m evals.eval_ops
 
 ### Run the complete evaluation suite
 
-The orchestrator builds the RAG pipeline once and injects that same instance into the component, pipeline, application, safety, and operational evaluations. It flattens the results into a single versioned snapshot.
+The orchestrator builds the standard RAG pipeline once and reuses that instance across pipeline, application, safety, and operational evaluations. The retriever evaluation receives the retriever exposed by that pipeline. The generator-isolation evaluation intentionally uses the generator with known-good golden context.
 
 ```bash
 # Write a candidate snapshot to baselines/candidate.json
@@ -217,7 +283,7 @@ python -m evals.run_suite
 # Save a reference baseline (use intentionally)
 python -m evals.run_suite --baseline
 
-# Add a human-readable label and include all informational metrics
+# Add a human-readable label and include informational metrics
 python -m evals.run_suite --label "reranker experiment" --full
 
 # Write to a custom path
@@ -232,7 +298,7 @@ By default, the snapshot retains metrics that participate in regression decision
 python -m evals.compare
 
 # Compare custom snapshots and show informational metrics too
-python -m evals.compare --baseline baselines/baseline.json --candidate baselines/candidate.json --all
+python -m evals.compare --baseline a.json --candidate b.json --all
 ```
 
 Each metric has a rule in `evals/metric_registry.py`:
@@ -258,26 +324,27 @@ The checked-in baseline is a reference snapshot, not a universal quality target.
 - **Golden datasets:** Curated examples used as repeatable evaluation cases and regression references.
 - **Metric registry:** Explicit rules for interpreting metric changes rather than treating every score as equally important.
 - **Operational metrics:** Latency percentiles, time to first token, token-based cost estimates, and reliability rates.
-- **Safety metrics:** Scope adherence, sensitive-information leakage, and toxicity.
+- **Runtime guardrails:** Input/output policy checks that can block unsafe, off-topic, or sensitive content before it reaches the user.
 
 ## Learning outcomes
 
 By working through this repository, you can learn how to:
 
 1. Evaluate retrieval and generation independently instead of treating RAG as one black box.
-2. Compare a baseline retriever with an LLM-based reranking strategy.
+2. Compare a standard retriever with a separate LLM-based reranking strategy.
 3. Build and use golden datasets for repeatable evaluation.
 4. Apply DeepEval metrics and a custom LLM judge.
-5. Log failed evaluation cases to LangSmith with metric-level failure reasons.
-6. Build a repeatable evaluation snapshot and compare it with a baseline.
-7. Define release gates, quality guardrails, and noise tolerances for RAG metrics.
-8. Measure quality, safety, latency, cost, and reliability as separate dimensions.
+5. Add runtime input/output guardrails with NVIDIA NeMo Guardrails.
+6. Log failed evaluation cases to LangSmith with metric-level failure reasons.
+7. Build repeatable evaluation snapshots and compare them with a baseline.
+8. Define release gates, quality guardrails, and noise tolerances for RAG metrics.
+9. Measure quality, safety, latency, cost, and reliability as separate dimensions.
 
 ## Notes
 
 - Evaluation scores depend on the golden dataset, judge model, metric threshold, and model version. Treat them as measurements for a defined setup, not universal quality guarantees.
-- LLM-as-a-judge evaluations call external models and can incur API costs.
-- Keep `.env` and credentials private. Do not commit API keys or sensitive trace payloads.
+- LLM-as-a-judge evaluations and model-backed runtime guardrails call external models and can incur API costs and latency.
+- Keep `.env`, credentials, and sensitive trace payloads private. Do not commit API keys.
 
 ## License
 
