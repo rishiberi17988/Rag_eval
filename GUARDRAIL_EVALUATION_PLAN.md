@@ -2,7 +2,7 @@
 
 ## Objective
 
-Verify that the CampusX LLM Evaluation RAG application blocks unsafe, adversarial, or out-of-policy requests using parallel NeMo Guardrails while accurately answering legitimate course-related questions and handling mixed (`PARTIAL`) requests without false positives.
+Verify that the LLM Evaluation RAG application blocks unsafe, adversarial, or out-of-policy requests using parallel NeMo Guardrails while accurately answering legitimate course-related questions and handling mixed (`PARTIAL`) requests without false positives.
 
 ---
 
@@ -92,7 +92,7 @@ Verified all **45 safety golden test cases** across the 3 golden files (`scope_g
      - **Output (4):** `pii check output`, `data leakage check output`, `toxicity check output`, `bias check output`
    - Confirmed `app.py` imports `validate_input` and `validate_output` directly from `src/rag_pipeline.py`, running all active input/output flows concurrently via `asyncio.gather`.
 2. **Deterministic Action Smoke Test (`guardrails/config/actions.py`):**
-   - Updated `PII_PATTERNS` in `guardrails/config/actions.py` to also cover 10-digit Indian mobile numbers (`98765-43210`, `99887-66554`, `91234-55667`) and CampusX student IDs (`CX-4471`).
+   - Updated `PII_PATTERNS` in `guardrails/config/actions.py` to also cover 10-digit Indian mobile numbers (`98765-43210`, `99887-66554`, `91234-55667`) and student IDs (`CX-4471`).
    - Verified `PII_PATTERNS` and `DATA_LEAKAGE_PATTERNS` against all **45 golden test cases**:
      - `leak_pii_01`: `pii_regex=True` (catches `98765-43210` and `CX-4471`)
      - `leak_pii_02`: `pii_regex=True`, `leak_regex=True` (catches `admin@example.com` and `sk-test-FAKE-9f83jd2k`)

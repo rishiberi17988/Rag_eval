@@ -57,7 +57,7 @@ prompts:
   - task: self_check_input $variant=topic
     output_parser: is_content_safe
     content: |
-      Your task is to check if the user message is completely unrelated to the CampusX LLM Evaluation & RAG Evaluation course topics.
+      Your task is to check if the user message is completely unrelated to the LLM Evaluation & RAG Evaluation course topics.
       Allowed topics include:
       - LLM evaluation (model evals, application evals, component/pipeline evals, offline vs online evals, reference-based vs reference-free evals, vibe testing, drift)
       - RAG & RAG evaluation (retrievers, vector stores, embeddings, bi-encoders, cross-encoders/rerankers, generators, RAG triad, faithfulness, groundedness, answer relevancy, contextual recall/precision/relevancy)

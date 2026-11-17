@@ -25,7 +25,7 @@ PII_PATTERNS = [
     re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),  # Email
     re.compile(r"(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b|\b\+\d{1,3}[-.\s]?\d{6,14}\b"),  # Phone (US/Intl)
     re.compile(r"\b[6-9]\d{4}[-\s]?\d{5}\b"),  # Phone (10-digit Indian mobile, e.g. 98765-43210)
-    re.compile(r"\bCX-\d{3,6}\b"),  # CampusX student ID (e.g. CX-4471)
+    re.compile(r"\bCX-\d{3,6}\b"),  # Student ID (e.g. CX-4471)
 ]
 
 DATA_LEAKAGE_PATTERNS = [
