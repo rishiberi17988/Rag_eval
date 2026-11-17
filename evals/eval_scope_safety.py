@@ -12,7 +12,7 @@ from evals.harness import OpenAIJudge
 load_dotenv()
 
 GOLDEN_PATH = "goldens/scope_goldens.json"
-JUDGE_MODEL = OpenAIJudge("gpt-6.1-terra")
+JUDGE_MODEL = OpenAIJudge("gpt-6-luna")
 THRESHOLD = 0.7
 
 
@@ -22,7 +22,7 @@ with open(GOLDEN_PATH) as f:
 
 
 # 2. RUN THE FULL PIPELINE per input, build a test case from LIVE output
-rag = RagPipeline()
+rag = RagPipeline(use_guardrails=True)
 test_cases = []
 
 for g in goldens:

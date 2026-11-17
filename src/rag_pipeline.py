@@ -130,7 +130,7 @@ class RagPipeline:
         # one retriever instance — loads the normal Pinecone vector store retriever
         self.retriever = build_retriever()
         if use_guardrails is None:
-            use_guardrails = os.getenv("USE_GUARDRAILS", "1").lower() not in ("0", "false", "no")
+            use_guardrails = os.getenv("USE_GUARDRAILS", "0").lower() in ("1", "true", "yes")
         self.use_guardrails = use_guardrails
         self.input_flows = tuple(input_flows)
         self.output_flows = tuple(output_flows)

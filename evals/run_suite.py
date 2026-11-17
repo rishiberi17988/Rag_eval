@@ -152,9 +152,10 @@ def run_suite(label="", quiet=False, full=False):
     print("\n[4/6] application quality eval...")
     metrics.update(flatten_nested("application", eval_application.run(rag)))
 
-    # --- SAFETY (hard gates) ---
+    # --- SAFETY (hard gates, evaluated with guardrails enabled) ---
     print("\n[5/6] safety evals...")
-    metrics.update(prefix_flat("safety", eval_safety.run_safety(rag, verbose=verbose)))
+    guarded_rag = RagPipeline(use_guardrails=True)
+    metrics.update(prefix_flat("safety", eval_safety.run_safety(guarded_rag, verbose=verbose)))
 
     # --- OPERATIONAL ---
     print("\n[6/6] operational evals...")

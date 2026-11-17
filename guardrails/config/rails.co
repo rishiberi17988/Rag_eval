@@ -9,7 +9,7 @@ define bot refuse prompt injection
   "Blocked [Prompt Injection Detection]: Instruction override / prompt injection detected."
 
 define bot refuse pii input
-  "Blocked [PII Protection - Input]: We can't accept or share personal info (SSN, phone, email, card)."
+  "Blocked [Protection - Input]: Request declined by policy."
 
 define bot refuse data leakage input
   "Blocked [Data Leakage Prevention - Input]: Requests for system prompts, secrets, or keys are not allowed."

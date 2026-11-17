@@ -33,7 +33,7 @@ from deepeval.metrics import GEval, PIILeakageMetric, ToxicityMetric
 from deepeval.metrics.g_eval import Rubric
 
 from src.rag_pipeline import RagPipeline
-from evals.harness import OpenAIJudge
+from evals.harness import OpenAIJudge, log_failures_to_langsmith
 
 load_dotenv()
 
@@ -41,7 +41,7 @@ load_dotenv()
 # ============================================================
 # 2. SHARED CONFIG
 # ============================================================
-JUDGE_MODEL = OpenAIJudge("gpt-6.1-terra")
+JUDGE_MODEL = OpenAIJudge("gpt-6-luna")
 
 # Per-eval golden files and thresholds (each safety concern has its own set).
 SCOPE_GOLDEN_PATH    = "goldens/scope_goldens.json"
@@ -68,6 +68,7 @@ def load_goldens(path):
 # We lean on each metric's own `success` flag for pass/fail so the summary is
 # direction-safe regardless of whether higher or lower score is "good".
 def summarize_results(result):
+    log_failures_to_langsmith(result)
     test_results = getattr(result, "test_results", None)
     if test_results is None:
         test_results = result if isinstance(result, list) else []
@@ -328,7 +329,7 @@ def run_toxicity(rag, verbose=True):
 # against a baseline. In the registry these are hard gates: pass rates must not
 # drop.
 def run_safety(rag=None, verbose=True):
-    rag = rag or RagPipeline()
+    rag = rag or RagPipeline(use_guardrails=True)
 
     scope    = run_scope(rag, verbose=verbose)
     leakage  = run_leakage(rag, verbose=verbose)
@@ -342,7 +343,12 @@ def run_safety(rag=None, verbose=True):
 
 
 def main():
-    snapshot = run_safety(verbose=True)
+    import os
+    from datetime import datetime, timezone
+    from evals.metric_registry import rule_for
+
+    rag = RagPipeline(use_guardrails=True)
+    snapshot = run_safety(rag=rag, verbose=True)
 
     print("\n" + "=" * 70)
     print("SAFETY SNAPSHOT  (feeds regression testing)")
@@ -351,6 +357,39 @@ def main():
         shown = f"{value:.4f}" if isinstance(value, float) else str(value)
         print(f"  {key:<28} {shown}")
     print("=" * 70)
+
+    # Write candidate snapshot (merging baseline non-safety metrics if present)
+    # so `python -m evals.compare` can compare safety directly without re-running
+    # the entire suite.
+    baseline_path = "baselines/baseline.json"
+    candidate_path = "baselines/candidate.json"
+    base_metrics = {}
+    if os.path.exists(baseline_path):
+        with open(baseline_path) as f:
+            base_data = json.load(f)
+            base_metrics = dict(base_data.get("metrics", {}))
+
+    for k, v in snapshot.items():
+        mid = f"safety.{k}"
+        if rule_for(mid)["kind"] != "info":
+            base_metrics[mid] = v
+
+    os.makedirs("baselines", exist_ok=True)
+    with open(candidate_path, "w") as f:
+        json.dump(
+            {
+                "metadata": {
+                    "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    "label": "safety with parallel guardrails",
+                    "n_metrics": len(base_metrics),
+                },
+                "metrics": base_metrics,
+            },
+            f,
+            indent=2,
+            sort_keys=True,
+        )
+    print(f"\nwrote safety candidate snapshot -> {candidate_path}")
 
 
 if __name__ == "__main__":

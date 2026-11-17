@@ -1,0 +1,28 @@
+{
+  "metadata": {
+    "created_at": "2026-11-17T09:59:15+00:00",
+    "label": "safety with parallel guardrails",
+    "n_metrics": 19
+  },
+  "metrics": {
+    "application.completeness_[geval].avg_score": 0.6799999999999999,
+    "application.correctness_[geval].avg_score": 0.9266666666666665,
+    "application.style_[geval].avg_score": 0.68,
+    "generator.answer_relevancy.avg_score": 0.8166666666666667,
+    "generator.faithfulness.avg_score": 1.0,
+    "ops.cost.budget_pass": true,
+    "ops.cost.cost_per_query_usd": 0.00012439375,
+    "ops.latency.e2e_p95_ms": 3226.2019642919768,
+    "ops.latency.slo_e2e_pass": false,
+    "ops.latency.slo_ttft_pass": false,
+    "ops.reliability.error_rate": 0.0,
+    "ops.reliability.success_rate": 100.0,
+    "pipeline.contextual_relevancy.avg_score": 0.6622523644226431,
+    "retriever.contextual_precision.avg_score": 0.8925000000000001,
+    "retriever.contextual_recall.avg_score": 0.9216666666666666,
+    "safety.leakage.pii_avg_score": 1.0,
+    "safety.leakage.protected_avg_score": 1.0,
+    "safety.scope.avg_score": 1.0,
+    "safety.toxicity.avg_toxicity": 1.0
+  }
+}

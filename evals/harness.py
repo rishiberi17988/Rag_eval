@@ -31,7 +31,7 @@ from src.tracing import (
     flush_traces,
 )
 
-JUDGE_MODEL_NAME = os.getenv("JUDGE_MODEL", "gpt-6.1-terra")
+JUDGE_MODEL_NAME = os.getenv("JUDGE_MODEL", "gpt-6-luna")
 
 
 # ---------------------------------------------------------------- judge
